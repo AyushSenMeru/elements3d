@@ -1,0 +1,539 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D Atomic Model Simulator</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <style>
+        body { margin: 0; overflow: hidden; font-family: 'Inter', sans-serif; }
+        
+        /* --- MOBILE-FIRST: Vertical Layout --- */
+        #app-container {
+            display: flex;
+            flex-direction: column; /* Stack controls on top of canvas */
+            min-height: 100vh;
+            background-color: #1f2937; /* Dark background */
+        }
+        #controls {
+            width: 100%; /* Full width on mobile */
+            padding: 20px;
+            background-color: #374151; /* Slightly lighter dark for controls */
+            color: #f3f4f6;
+            overflow-y: auto;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.5); /* Shadow adjusted for bottom separation */
+            z-index: 10;
+            max-height: 30vh; /* Prevent controls from taking up the entire mobile screen */
+        }
+        #canvas-container {
+            flex-grow: 1;
+            position: relative;
+            height: 70h; /* Ensure canvas takes up half the screen height on mobile */
+            min-height: 300px; /* Minimum size for the 3D view */
+        }
+
+        /* --- DESKTOP/TABLET: Horizontal Layout (md breakpoint) --- */
+        @media (min-width: 768px) {
+            #app-container {
+                flex-direction: row; /* Side-by-side */
+                height: 100vh; 
+            }
+            #controls {
+                width: 300px; /* Fixed width for control panel */
+                flex-shrink: 0;
+                box-shadow: 2px 0 10px rgba(0, 0, 0, 0.5); /* Shadow adjusted back to right side */
+                max-height: none; /* No max height restriction on desktop */
+            }
+            #canvas-container {
+                height: 100%; /* Take up all available height */
+            }
+        }
+        
+        /* --- General Styling --- */
+        .control-group {
+            margin-bottom: 20px;
+            padding: 15px;
+            border-radius: 8px;
+            background-color: #4b5563;
+        }
+        input[type="range"] {
+            width: 100%;
+        }
+        input[type="number"] {
+            background-color: #1f2937;
+            border: 1px solid #6b7280;
+            color: #f3f4f6;
+            padding: 5px;
+            border-radius: 4px;
+            width: 60px;
+            text-align: center;
+        }
+        .text-fact {
+            font-style: italic;
+            color: #a5b4fc; /* Indigo/Lavender color for facts */
+            display: block;
+            margin-top: 5px;
+        }
+    </style>
+</head>
+<body>
+
+<div id="app-container">
+    <div id="controls">
+        <h1 class="text-2xl font-bold mb-6 text-indigo-400">Element Bohr Model</h1>
+
+        <div class="control-group">
+            <h2 class="text-lg font-semibold mb-3">Element Selector</h2>
+            <div class="flex items-center justify-between mb-3">
+                <label for="atomic-number-input" class="block">Atomic Number (Z):</label>
+                <input type="number" id="atomic-number-input" value="38" min="1" max="118">
+            </div>
+            <p class="text-sm">Current Element: <span id="info-name" class="font-bold text-green-300">Hydrogen</span> (<span id="info-symbol">H</span>)</p>
+        </div>
+
+        <div class="control-group">
+            <h2 class="text-lg font-semibold mb-3">Atomic Composition</h2>
+            <p class="text-sm mb-1">Protons (Z): <span id="atomicNumber" class="font-mono text-green-300">1</span></p>
+            <p class="text-sm mb-1">Neutrons (N): <span id="neutronsCount" class="font-mono text-green-300">0</span></p>
+            <p class="text-sm mb-1">Mass Number (A): <span id="massNumber" class="font-mono text-green-300">1</span></p>
+            <p class="text-sm mb-1">Total Electrons: <span id="electronsCount" class="font-mono text-green-300">1</span></p>
+            <p class="text-sm mb-1">Shell Configuration: <span id="shellConfig" class="font-mono text-green-300">1</span></p>
+        </div>
+        
+        <div class="control-group">
+            <h2 class="text-lg font-semibold mb-3">Periodic Properties</h2>
+            <p class="text-sm mb-1">Group No.: <span id="info-group" class="font-mono text-yellow-300">1</span></p>
+            <p class="text-sm mb-3">Group Name: <span id="info-group-name" class="font-mono text-yellow-300">Nonmetals</span></p>
+            <p class="text-sm font-semibold mb-1">Interesting Fact:</p>
+            <span id="info-fact" class="text-fact">The most abundant element in the universe.</span>
+        </div>
+
+        <div class="control-group">
+            <p class="text-sm">Particle View: Use mouse/touch to **rotate** and **scroll/pinch to zoom**.</p>
+        </div>
+
+    </div>
+    <div id="canvas-container">
+        <!-- THREE.js canvas will be appended here -->
+    </div>
+</div>
+
+<script>
+    // --- Global Variables and Constants ---
+    let scene, camera, renderer, controls;
+    let nucleusGroup = new THREE.Group();
+    let electronGroup = new THREE.Group();
+
+    // Configuration constants
+    const ELECTRON_ORBIT_BASE_RADIUS = 2.5; 
+    const ELECTRON_ORBIT_RADIUS_INCREMENT = 1.5; 
+    const ELECTRON_SPEED_BASE = 0.005;
+    const ELECTRON_RADIUS = 0.05;
+    const NUCLEON_RADIUS = 0.15;
+
+    // UI elements
+    const atomicNumberInput = document.getElementById('atomic-number-input');
+    const nameDisplay = document.getElementById('info-name');
+    const symbolDisplay = document.getElementById('info-symbol');
+    const atomicNumberDisplay = document.getElementById('atomicNumber');
+    const neutronsCountDisplay = document.getElementById('neutronsCount');
+    const massNumberDisplay = document.getElementById('massNumber');
+    const electronsCountDisplay = document.getElementById('electronsCount');
+    const shellConfigDisplay = document.getElementById('shellConfig');
+
+    // New UI elements for Periodic Properties
+    const groupDisplay = document.getElementById('info-group');
+    const groupNameDisplay = document.getElementById('info-group-name');
+    const factDisplay = document.getElementById('info-fact');
+
+    const canvasContainer = document.getElementById('canvas-container');
+
+    // Element Data (Z, Symbol, Name, Shells [K, L, M...], Avg Mass, Group, GroupName, Fact)
+    const ELEMENTS = [
+        // Shell configurations and properties from previous steps.
+        { Z: 1, s: "H", n: "Hydrogen", sh: [1], m: 1.008, g: 1, gn: "Nonmetals", f: "The most abundant element in the universe." },
+        { Z: 2, s: "He", n: "Helium", sh: [2], m: 4.002, g: 18, gn: "Noble Gases", f: "Has the lowest boiling point of any element, making it impossible to freeze." },
+        { Z: 3, s: "Li", n: "Lithium", sh: [2, 1], m: 6.94, g: 1, gn: "Alkali Metals", f: "The lightest of all metals, commonly used in batteries." },
+        { Z: 4, s: "Be", n: "Beryllium", sh: [2, 2], m: 9.012, g: 2, gn: "Alkaline Earth Metals", f: "Used to make specialized aerospace materials due to its light weight and strength." },
+        { Z: 5, s: "B", n: "Boron", sh: [2, 3], m: 10.81, g: 13, gn: "Metalloids", f: "Essential for plant growth, but toxic to insects in high concentrations." },
+        { Z: 6, s: "C", n: "Carbon", sh: [2, 4], m: 12.011, g: 14, gn: "Nonmetals", f: "Forms the basis of all known life, capable of making millions of compounds." },
+        { Z: 7, s: "N", n: "Nitrogen", sh: [2, 5], m: 14.007, g: 15, gn: "Nonmetals", f: "Makes up about 78% of the Earth's atmosphere." },
+        { Z: 8, s: "O", n: "Oxygen", sh: [2, 6], m: 15.999, g: 16, gn: "Nonmetals", f: "The second most abundant gas in the atmosphere (21%) and vital for respiration." },
+        { Z: 9, s: "F", n: "Fluorine", sh: [2, 7], m: 18.998, g: 17, gn: "Halogens", f: "The most chemically reactive and electronegative element." },
+        { Z: 10, s: "Ne", n: "Neon", sh: [2, 8], m: 20.18, g: 18, gn: "Noble Gases", f: "Produces a bright orange-red glow in discharge lamps and signs." },
+        { Z: 11, s: "Na", n: "Sodium", sh: [2, 8, 1], m: 22.990, g: 1, gn: "Alkali Metals", f: "Highly reactive and causes fireworks to burn with a brilliant yellow flame." },
+        { Z: 12, s: "Mg", n: "Magnesium", sh: [2, 8, 2], m: 24.305, g: 2, gn: "Alkaline Earth Metals", f: "A necessary nutrient for the human body, vital for muscle and nerve function." },
+        { Z: 13, s: "Al", n: "Aluminium", sh: [2, 8, 3], m: 26.982, g: 13, gn: "Post-transition Metals", f: "The most abundant metal in the Earth's crust." },
+        { Z: 14, s: "Si", n: "Silicon", sh: [2, 8, 4], m: 28.085, g: 14, gn: "Metalloids", f: "The second most abundant element in the Earth's crust, essential for microchips." },
+        { Z: 15, s: "P", n: "Phosphorus", sh: [2, 8, 5], m: 30.974, g: 15, gn: "Nonmetals", f: "Exists in white and red forms; white phosphorus is spontaneously flammable in air." },
+        { Z: 16, s: "S", n: "Sulfur", sh: [2, 8, 6], m: 32.06, g: 16, gn: "Nonmetals", f: "Used in the manufacture of sulfuric acid, the world's most-produced industrial chemical." },
+        { Z: 17, s: "Cl", n: "Chlorine", sh: [2, 8, 7], m: 35.45, g: 17, gn: "Halogens", f: "Used widely as a disinfectant in water treatment and cleaning products." },
+        { Z: 18, s: "Ar", n: "Argon", sh: [2, 8, 8], m: 39.948, g: 18, gn: "Noble Gases", f: "Used in \"argon-filled\" windows to improve insulation." },
+        { Z: 19, s: "K", n: "Potassium", sh: [2, 8, 8, 1], m: 39.098, g: 1, gn: "Alkali Metals", f: "Essential for heart function and nerve transmission in the human body." },
+        { Z: 20, s: "Ca", n: "Calcium", sh: [2, 8, 8, 2], m: 40.078, g: 2, gn: "Alkaline Earth Metals", f: "The main component of bones and teeth." },
+        { Z: 21, s: "Sc", n: "Scandium", sh: [2, 8, 9, 2], m: 44.956, g: 3, gn: "Transition Metals", f: "Used in lightweight alloys for high-performance sports equipment." },
+        { Z: 22, s: "Ti", n: "Titanium", sh: [2, 8, 10, 2], m: 47.867, g: 4, gn: "Transition Metals", f: "Known for its excellent strength-to-weight ratio; used in aircraft and surgical implants." },
+        { Z: 23, s: "V", n: "Vanadium", sh: [2, 8, 11, 2], m: 50.942, g: 5, gn: "Transition Metals", f: "Used to make specialized steel alloys, giving them incredible toughness." },
+        { Z: 24, s: "Cr", n: "Chromium", sh: [2, 8, 13, 1], m: 51.996, g: 6, gn: "Transition Metals", f: "Gives rubies their red color and is used to plate steel (chrome)." },
+        { Z: 25, s: "Mn", n: "Manganese", sh: [2, 8, 13, 2], m: 54.938, g: 7, gn: "Transition Metals", f: "Used in steel production to reduce brittleness and increase hardness." },
+        { Z: 26, s: "Fe", n: "Iron", sh: [2, 8, 14, 2], m: 55.845, g: 8, gn: "Transition Metals", f: "Forms the magnetic core of the Earth." },
+        { Z: 27, s: "Co", n: "Cobalt", sh: [2, 8, 15, 2], m: 58.933, g: 9, gn: "Transition Metals", f: "The basis for blue pigment in glass and ceramics." },
+        { Z: 28, s: "Ni", n: "Nickel", sh: [2, 8, 16, 2], m: 58.693, g: 10, gn: "Transition Metals", f: "First metal to be incorporated into the U.S. five-cent coin (the \"nickel\")." },
+        { Z: 29, s: "Cu", n: "Copper", sh: [2, 8, 18, 1], m: 63.546, g: 11, gn: "Transition Metals", f: "The only metal other than gold that has a natural color other than gray or white." },
+        { Z: 30, s: "Zn", n: "Zinc", sh: [2, 8, 18, 2], m: 65.38, g: 12, gn: "Transition Metals", f: "Essential to the human immune system; used to prevent corrosion in steel (galvanizing)." },
+        { Z: 31, s: "Ga", n: "Gallium", sh: [2, 8, 18, 3], m: 69.723, g: 13, gn: "Post-transition Metals", f: "Melts at just above room temperature (29.76 °C), melting in your hand." },
+        { Z: 32, s: "Ge", n: "Germanium", sh: [2, 8, 18, 4], m: 72.63, g: 14, gn: "Metalloids", f: "Used in fiber-optic systems and infrared optics." },
+        { Z: 33, s: "As", n: "Arsenic", sh: [2, 8, 18, 5], m: 74.922, g: 15, gn: "Metalloids", f: "Historically famous as a poison, but now used in semiconductors." },
+        { Z: 34, s: "Se", n: "Selenium", sh: [2, 8, 18, 6], m: 78.971, g: 16, gn: "Nonmetals", f: "Its ability to conduct electricity increases when exposed to light." },
+        { Z: 35, s: "Br", n: "Bromine", sh: [2, 8, 18, 7], m: 79.904, g: 17, gn: "Halogens", f: "The only nonmetallic element that is a liquid at room temperature." },
+        { Z: 36, s: "Kr", n: "Krypton", sh: [2, 8, 18, 8], m: 83.798, g: 18, gn: "Noble Gases", f: "Used in high-performance flash photography bulbs." },
+        { Z: 37, s: "Rb", n: "Rubidium", sh: [2, 8, 18, 8, 1], m: 85.468, g: 1, gn: "Alkali Metals", f: "Highly reactive; it ignites spontaneously in the presence of air or water." },
+        { Z: 38, s: "Sr", n: "Strontium", sh: [2, 8, 18, 8, 2], m: 87.62, g: 2, gn: "Alkaline Earth Metals", f: "Gives fireworks their brilliant red color." },
+        { Z: 39, s: "Y", n: "Yttrium", sh: [2, 8, 18, 9, 2], m: 88.906, g: 3, gn: "Transition Metals", f: "Critical component in red phosphors for older color television screens." },
+        { Z: 40, s: "Zr", n: "Zirconium", sh: [2, 8, 18, 10, 2], m: 91.224, g: 4, gn: "Transition Metals", f: "Highly resistant to corrosion; used in nuclear reactor cladding." },
+        { Z: 41, s: "Nb", n: "Niobium", sh: [2, 8, 18, 12, 1], m: 92.906, g: 5, gn: "Transition Metals", f: "Used in strong, superconductive magnets." },
+        { Z: 42, s: "Mo", n: "Molybdenum", sh: [2, 8, 18, 13, 1], m: 95.96, g: 6, gn: "Transition Metals", f: "Essential trace element in plants, often used in high-strength steel." },
+        { Z: 43, s: "Tc", n: "Technetium", sh: [2, 8, 18, 13, 2], m: 98, g: 7, gn: "Transition Metals", f: "The lightest element with no stable isotopes; all forms are radioactive." },
+        { Z: 44, s: "Ru", n: "Ruthenium", sh: [2, 8, 18, 15, 1], m: 101.07, g: 8, gn: "Transition Metals", f: "Used in electrical contacts and specialized alloys." },
+        { Z: 45, s: "Rh", n: "Rhodium", sh: [2, 8, 18, 16, 1], m: 102.91, g: 9, gn: "Transition Metals", f: "The rarest of the platinum group metals, used in catalytic converters." },
+        { Z: 46, s: "Pd", n: "Palladium", sh: [2, 8, 18, 18, 0], m: 106.42, g: 10, gn: "Transition Metals", f: "Can absorb up to 900 times its own volume of hydrogen." },
+        { Z: 47, s: "Ag", n: "Silver", sh: [2, 8, 18, 18, 1], m: 107.87, g: 11, gn: "Transition Metals", f: "Has the highest electrical and thermal conductivity of all metals." },
+        { Z: 48, s: "Cd", n: "Cadmium", sh: [2, 8, 18, 18, 2], m: 112.41, g: 12, gn: "Transition Metals", f: "Used in control rods in nuclear reactors and rechargeable batteries." },
+        { Z: 49, s: "In", n: "Indium", sh: [2, 8, 18, 18, 3], m: 114.82, g: 13, gn: "Post-transition Metals", f: "Used to make the clear conductive coatings for touch screens and solar panels." },
+        { Z: 50, s: "Sn", n: "Tin", sh: [2, 8, 18, 18, 4], m: 118.71, g: 14, gn: "Post-transition Metals", f: "Used since ancient times to prevent iron from rusting." },
+        { Z: 51, s: "Sb", n: "Antimony", sh: [2, 8, 18, 18, 5], m: 121.76, g: 15, gn: "Metalloids", f: "Primarily used to make alloys harder and more resistant to fire." },
+        { Z: 52, s: "Te", n: "Tellurium", sh: [2, 8, 18, 18, 6], m: 127.6, g: 16, gn: "Metalloids", f: "Found in very small amounts in the Earth's crust; rare." },
+        { Z: 53, s: "I", n: "Iodine", sh: [2, 8, 18, 18, 7], m: 126.9, g: 17, gn: "Halogens", f: "Essential for thyroid hormone production in the human body." },
+        { Z: 54, s: "Xe", n: "Xenon", sh: [2, 8, 18, 18, 8], m: 131.293, g: 18, gn: "Noble Gases", f: "Used in high-intensity discharge lamps, such as car headlamps." },
+        { Z: 55, s: "Cs", n: "Caesium", sh: [2, 8, 18, 18, 8, 1], m: 132.905, g: 1, gn: "Alkali Metals", f: "The most reactive metal; used in atomic clocks." },
+        { Z: 56, s: "Ba", n: "Barium", sh: [2, 8, 18, 18, 8, 2], m: 137.327, g: 2, gn: "Alkaline Earth Metals", f: "Used in medical imaging (barium meals) to enhance X-ray contrast." },
+        { Z: 57, s: "La", n: "Lanthanum", sh: [2, 8, 18, 18, 9, 2], m: 138.905, g: 3, gn: "Lanthanides", f: "Used in the manufacture of high-quality camera lenses." },
+        { Z: 58, s: "Ce", n: "Cerium", sh: [2, 8, 18, 19, 9, 2], m: 140.116, g: "N/A", gn: "Lanthanides", f: "The most abundant of the rare earth elements." },
+        { Z: 59, s: "Pr", n: "Praseodymium", sh: [2, 8, 18, 21, 8, 2], m: 140.908, g: "N/A", gn: "Lanthanides", f: "Used to create yellow-orange glass and specialized goggles." },
+        { Z: 60, s: "Nd", n: "Neodymium", sh: [2, 8, 18, 22, 8, 2], m: 144.242, g: "N/A", gn: "Lanthanides", f: "Used in the strongest permanent magnets known." },
+        { Z: 61, s: "Pm", n: "Promethium", sh: [2, 8, 18, 23, 8, 2], m: 145, g: "N/A", gn: "Lanthanides", f: "The only radioactive element among the rare earth metals." },
+        { Z: 62, s: "Sm", n: "Samarium", sh: [2, 8, 18, 24, 8, 2], m: 150.36, g: "N/A", gn: "Lanthanides", f: "Used in magnets that retain their strength at high temperatures." },
+        { Z: 63, s: "Eu", n: "Europium", sh: [2, 8, 18, 25, 8, 2], m: 151.964, g: "N/A", gn: "Lanthanides", f: "Used to create the red phosphor on television and computer screens." },
+        { Z: 64, s: "Gd", n: "Gadolinium", sh: [2, 8, 18, 25, 9, 2], m: 157.25, g: "N/A", gn: "Lanthanides", f: "Used as a contrast agent in MRI scans." },
+        { Z: 65, s: "Tb", n: "Terbium", sh: [2, 8, 18, 27, 8, 2], m: 158.925, g: "N/A", gn: "Lanthanides", f: "Used in the green phosphor of fluorescent lamps and displays." },
+        { Z: 66, s: "Dy", n: "Dysprosium", sh: [2, 8, 18, 28, 8, 2], m: 162.500, g: "N/A", gn: "Lanthanides", f: "Key component in modern wind turbine and electric vehicle motors." },
+        { Z: 67, s: "Ho", n: "Holmium", sh: [2, 8, 18, 29, 8, 2], m: 164.930, g: "N/A", gn: "Lanthanides", f: "Has the highest magnetic strength of any element." },
+        { Z: 68, s: "Er", n: "Erbium", sh: [2, 8, 18, 30, 8, 2], m: 167.259, g: "N/A", gn: "Lanthanides", f: "Used in fiber-optic data transmission to amplify light signals." },
+        { Z: 69, s: "Tm", n: "Thulium", sh: [2, 8, 18, 31, 8, 2], m: 168.934, g: "N/A", gn: "Lanthanides", f: "Its isotope Tm-170 is used as a portable X-ray source." },
+        { Z: 70, s: "Yb", n: "Ytterbium", sh: [2, 8, 18, 32, 8, 2], m: 173.054, g: "N/A", gn: "Lanthanides", f: "Used in specialized lasers and optical glass." },
+        { Z: 71, s: "Lu", n: "Lutetium", sh: [2, 8, 18, 32, 9, 2], m: 174.966, g: "N/A", gn: "Lanthanides", f: "Used in specialized crystal detectors for medical imaging (PET scans)." },
+        { Z: 72, s: "Hf", n: "Hafnium", sh: [2, 8, 18, 32, 10, 2], m: 178.49, g: 4, gn: "Transition Metals", f: "Used in control rods in nuclear reactors." },
+        { Z: 73, s: "Ta", n: "Tantalum", sh: [2, 8, 18, 32, 11, 2], m: 180.948, g: 5, gn: "Transition Metals", f: "Highly corrosion-resistant; used in surgical implants and capacitors." },
+        { Z: 74, s: "W", n: "Tungsten", sh: [2, 8, 18, 32, 12, 2], m: 183.84, g: 6, gn: "Transition Metals", f: "Has the highest melting point of all elements." },
+        { Z: 75, s: "Re", n: "Rhenium", sh: [2, 8, 18, 32, 13, 2], m: 186.207, g: 7, gn: "Transition Metals", f: "Used in high-temperature alloys for jet engines." },
+        { Z: 76, s: "Os", n: "Osmium", sh: [2, 8, 18, 32, 14, 2], m: 190.23, g: 8, gn: "Transition Metals", f: "The densest naturally occurring element." },
+        { Z: 77, s: "Ir", n: "Iridium", sh: [2, 8, 18, 32, 15, 2], m: 192.217, g: 9, gn: "Transition Metals", f: "Extremely resistant to corrosion; used in spark plugs and pen tips." },
+        { Z: 78, s: "Pt", n: "Platinum", sh: [2, 8, 18, 32, 17, 1], m: 195.084, g: 10, gn: "Transition Metals", f: "Highly valued for its use in catalytic converters and jewelry." },
+        { Z: 79, s: "Au", n: "Gold", sh: [2, 8, 18, 32, 18, 1], m: 196.967, g: 11, gn: "Transition Metals", f: "Highly resistant to corrosion, making it excellent for electronics." },
+        { Z: 80, s: "Hg", n: "Mercury", sh: [2, 8, 18, 32, 18, 2], m: 200.592, g: 12, gn: "Transition Metals", f: "The only metal that is liquid at standard temperature and pressure." },
+        { Z: 81, s: "Tl", n: "Thallium", sh: [2, 8, 18, 32, 18, 3], m: 204.383, g: 13, gn: "Post-transition Metals", f: "Highly toxic and was once used as a rat poison." },
+        { Z: 82, s: "Pb", n: "Lead", sh: [2, 8, 18, 32, 18, 4], m: 207.2, g: 14, gn: "Post-transition Metals", f: "Used in weights, shielding against X-rays, and car batteries." },
+        { Z: 83, s: "Bi", n: "Bismuth", sh: [2, 8, 18, 32, 18, 5], m: 208.980, g: 15, gn: "Post-transition Metals", f: "The most naturally diamagnetic element; its compounds are used in Pepto-Bismol." },
+        { Z: 84, s: "Po", n: "Polonium", sh: [2, 8, 18, 32, 18, 6], m: 209, g: 16, gn: "Post-transition Metals", f: "Extremely radioactive; used as a heat source in space probes." },
+        { Z: 85, s: "At", n: "Astatine", sh: [2, 8, 18, 32, 18, 7], m: 210, g: 17, gn: "Halogens", f: "The rarest naturally occurring element on Earth; less than 30 grams in the crust." },
+        { Z: 86, s: "Rn", n: "Radon", sh: [2, 8, 18, 32, 18, 8], m: 222, g: 18, gn: "Noble Gases", f: "A radioactive noble gas that can accumulate in basements of homes." },
+        { Z: 87, s: "Fr", n: "Francium", sh: [2, 8, 18, 32, 18, 8, 1], m: 223, g: 1, gn: "Alkali Metals", f: "The second-rarest naturally occurring element (after astatine); highly radioactive." },
+        { Z: 88, s: "Ra", n: "Radium", sh: [2, 8, 18, 32, 18, 8, 2], m: 226, g: 2, gn: "Alkaline Earth Metals", f: "Historically used in luminous paints until its radioactivity was understood." },
+        { Z: 89, s: "Ac", n: "Actinium", sh: [2, 8, 18, 32, 18, 9, 2], m: 227, g: 3, gn: "Actinides", f: "Highly radioactive, primarily used as a neutron source." },
+        { Z: 90, s: "Th", n: "Thorium", sh: [2, 8, 18, 32, 18, 10, 2], m: 232.038, g: "N/A", gn: "Actinides", f: "A radioactive element often considered a potential nuclear fuel source." },
+        { Z: 91, s: "Pa", n: "Protactinium", sh: [2, 8, 18, 32, 20, 9, 2], m: 231.036, g: "N/A", gn: "Actinides", f: "Extremely toxic and highly radioactive; very little is known about its properties." },
+        { Z: 92, s: "U", n: "Uranium", sh: [2, 8, 18, 32, 21, 9, 2], m: 238.029, g: "N/A", gn: "Actinides", f: "Famous for its use as fuel in nuclear reactors and weapons." },
+        { Z: 93, s: "Np", n: "Neptunium", sh: [2, 8, 18, 32, 22, 9, 2], m: 237, g: "N/A", gn: "Actinides", f: "The first synthetic transuranium element discovered." },
+        { Z: 94, s: "Pu", n: "Plutonium", sh: [2, 8, 18, 32, 24, 8, 2], m: 244, g: "N/A", gn: "Actinides", f: "Key component in nuclear weapons and some nuclear power sources." },
+        { Z: 95, s: "Am", n: "Americium", sh: [2, 8, 18, 32, 25, 8, 2], m: 243, g: "N/A", gn: "Actinides", f: "Used in common household smoke detectors." },
+        { Z: 96, s: "Cm", n: "Curium", sh: [2, 8, 18, 32, 25, 9, 2], m: 247, g: "N/A", gn: "Actinides", f: "Used in radioisotope thermoelectric generators (RTGs) for space missions." },
+        { Z: 97, s: "Bk", n: "Berkelium", sh: [2, 8, 18, 32, 27, 8, 2], m: 247, g: "N/A", gn: "Actinides", f: "Named after the city of Berkeley, California, home of its discovery." },
+        { Z: 98, s: "Cf", n: "Californium", sh: [2, 8, 18, 32, 28, 8, 2], m: 251, g: "N/A", gn: "Actinides", f: "One of the most expensive elements, with unique neutron-emitting properties." },
+        { Z: 99, s: "Es", n: "Einsteinium", sh: [2, 8, 18, 32, 29, 8, 2], m: 252, g: "N/A", gn: "Actinides", f: "Named after Albert Einstein." },
+        { Z: 100, s: "Fm", n: "Fermium", sh: [2, 8, 18, 32, 30, 8, 2], m: 257, g: "N/A", gn: "Actinides", f: "Named after the physicist Enrico Fermi." },
+        { Z: 101, s: "Md", n: "Mendelevium", sh: [2, 8, 18, 32, 31, 8, 2], m: 258, g: "N/A", gn: "Actinides", f: "Named after Dmitri Mendeleev, the father of the modern periodic table." },
+        { Z: 102, s: "No", n: "Nobelium", sh: [2, 8, 18, 32, 32, 8, 2], m: 259, g: "N/A", gn: "Actinides", f: "Named in honor of Alfred Nobel, inventor of dynamite." },
+        { Z: 103, s: "Lr", n: "Lawrencium", sh: [2, 8, 18, 32, 32, 8, 3], m: 262, g: "N/A", gn: "Actinides", f: "Named in honor of Ernest O. Lawrence, inventor of the cyclotron." },
+        { Z: 104, s: "Rf", n: "Rutherfordium", sh: [2, 8, 18, 32, 32, 10, 2], m: 267, g: 4, gn: "Transition Metals", f: "Named after physicist Ernest Rutherford." },
+        { Z: 105, s: "Db", n: "Dubnium", sh: [2, 8, 18, 32, 32, 11, 2], m: 268, g: 5, gn: "Transition Metals", f: "Named after Dubna, Russia, where the element was synthesized." },
+        { Z: 106, s: "Sg", n: "Seaborgium", sh: [2, 8, 18, 32, 32, 12, 2], m: 271, g: 6, gn: "Transition Metals", f: "Named after Nobel Laureate Glenn T. Seaborg." },
+        { Z: 107, s: "Bh", n: "Bohrium", sh: [2, 8, 18, 32, 32, 13, 2], m: 272, g: 7, gn: "Transition Metals", f: "Named after Danish physicist Niels Bohr." },
+        { Z: 108, s: "Hs", n: "Hassium", sh: [2, 8, 18, 32, 32, 14, 2], m: 270, g: 8, gn: "Transition Metals", f: "Named after the German state of Hesse." },
+        { Z: 109, s: "Mt", n: "Meitnerium", sh: [2, 8, 18, 32, 32, 15, 2], m: 276, g: 9, gn: "Transition Metals", f: "Named after physicist Lise Meitner." },
+        { Z: 110, s: "Ds", n: "Darmstadtium", sh: [2, 8, 18, 32, 32, 16, 2], m: 281, g: 10, gn: "Transition Metals", f: "Named after the city of Darmstadt, Germany." },
+        { Z: 111, s: "Rg", n: "Roentgenium", sh: [2, 8, 18, 32, 32, 17, 2], m: 280, g: 11, gn: "Transition Metals", f: "Named after Wilhelm Conrad Röntgen, discoverer of X-rays." },
+        { Z: 112, s: "Cn", n: "Copernicium", sh: [2, 8, 18, 32, 32, 18, 2], m: 285, g: 12, gn: "Transition Metals", f: "Named after the astronomer Nicolaus Copernicus." },
+        { Z: 113, s: "Nh", n: "Nihonium", sh: [2, 8, 18, 32, 32, 18, 3], m: 286, g: 13, gn: "Post-transition Metals", f: "Named after 'Nihon', the Japanese name for Japan." },
+        { Z: 114, s: "Fl", n: "Flerovium", sh: [2, 8, 18, 32, 32, 18, 4], m: 289, g: 14, gn: "Post-transition Metals", f: "Named after Russian physicist Georgy Flyorov." },
+        { Z: 115, s: "Mc", n: "Moscovium", sh: [2, 8, 18, 32, 32, 18, 5], m: 290, g: 15, gn: "Post-transition Metals", f: "Named after the Moscow region, home to the discovery lab." },
+        { Z: 116, s: "Lv", n: "Livermorium", sh: [2, 8, 18, 32, 32, 18, 6], m: 293, g: 16, gn: "Post-transition Metals", f: "Named after the Lawrence Livermore National Laboratory in California." },
+        { Z: 117, s: "Ts", n: "Tennessine", sh: [2, 8, 18, 32, 32, 18, 7], m: 294, g: 17, gn: "Halogens", f: "Named after the US state of Tennessee." },
+        { Z: 118, s: "Og", n: "Oganesson", sh: [2, 8, 18, 32, 32, 18, 8], m: 294, g: 18, gn: "Noble Gases", f: "The heaviest element discovered; named after physicist Yuri Oganessian." }
+    ].sort((a, b) => a.Z - b.Z);
+
+    /**
+     * Gets element data by Z, using the explicitly defined data table.
+     */
+    function getElementData(Z) {
+        let element = ELEMENTS.find(e => e.Z === Z);
+
+        // Fallback for safety
+        if (!element) {
+            return {
+                protons: Z, neutrons: Z, shells: [Z], totalElectrons: Z,
+                symbol: `Unn`, name: `Element ${Z}`, massNumber: Z * 2,
+                group: 'N/A', groupName: 'Unknown', fact: 'Data unavailable for this Z.'
+            };
+        }
+
+        const protons = element.Z;
+        const totalElectrons = element.sh.reduce((sum, count) => sum + count, 0);
+        // Calculate approximated neutrons (used for nucleus size)
+        const neutrons = Math.max(0, Math.round(element.m - protons));
+
+        return {
+            protons: protons,
+            neutrons: neutrons,
+            shells: element.sh,
+            totalElectrons: totalElectrons,
+            symbol: element.s,
+            name: element.n,
+            massNumber: protons + neutrons,
+            group: element.g,
+            groupName: element.gn,
+            fact: element.f
+        };
+    }
+
+    // --- Core Functions ---
+
+    function init() {
+        // Scene Setup
+        scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x111111);
+
+        // Camera Setup
+        camera = new THREE.PerspectiveCamera(75, canvasContainer.clientWidth / canvasContainer.clientHeight, 0.1, 1000);
+        camera.position.z = 20;
+
+        // Renderer Setup
+        renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(canvasContainer.clientWidth, canvasContainer.clientHeight);
+        canvasContainer.appendChild(renderer.domElement);
+
+        // Orbit Controls (handles rotation and zoom via mouse/touch)
+        controls = new THREE.OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true; 
+        controls.dampingFactor = 0.05;
+        controls.screenSpacePanning = false;
+        controls.minDistance = 5; 
+        controls.maxDistance = 50; 
+
+        // Lighting
+        const ambientLight = new THREE.AmbientLight(0x404040, 5);
+        scene.add(ambientLight);
+        const directionalLight = new THREE.DirectionalLight(0xffffff, 5);
+        directionalLight.position.set(10, 10, 10);
+        scene.add(directionalLight);
+
+        // Initial Model Creation (Hydrogen, Z=1)
+        updateModel();
+
+        // Event Listeners
+        atomicNumberInput.addEventListener('input', () => {
+             // Clamp Z between 1 and 118
+            let z = parseInt(atomicNumberInput.value);
+            z = Math.max(1, Math.min(118, z));
+            atomicNumberInput.value = z;
+            updateModel();
+        });
+        window.addEventListener('resize', onWindowResize, false);
+    }
+
+    function onWindowResize() {
+        // Adjust camera aspect ratio and renderer size based on the container's new dimensions
+        camera.aspect = canvasContainer.clientWidth / canvasContainer.clientHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(canvasContainer.clientWidth, canvasContainer.clientHeight);
+    }
+
+    function updateModel() {
+        const Z = parseInt(atomicNumberInput.value);
+        const data = getElementData(Z);
+
+        // Update Atomic Info Panel
+        nameDisplay.textContent = data.name;
+        symbolDisplay.textContent = data.symbol;
+        atomicNumberDisplay.textContent = data.protons;
+        neutronsCountDisplay.textContent = data.neutrons;
+        massNumberDisplay.textContent = data.massNumber;
+        electronsCountDisplay.textContent = data.totalElectrons;
+        shellConfigDisplay.textContent = data.shells.join(', ');
+
+        // Update Periodic Properties Panel (NEW)
+        groupDisplay.textContent = data.group;
+        groupNameDisplay.textContent = data.groupName;
+        factDisplay.textContent = data.fact;
+
+        // Recreate Model
+        createNucleus(data.protons, data.neutrons);
+        createElectronShells(data.shells);
+    }
+
+    /**
+     * Creates a tightly clustered nucleus at the center (0,0,0).
+     * @param {number} protons - Number of protons (Red).
+     * @param {number} neutrons - Number of neutrons (Gray).
+     */
+    function createNucleus(protons, neutrons) {
+        // Remove existing nucleus
+        scene.remove(nucleusGroup);
+        nucleusGroup = new THREE.Group();
+
+        const protonGeometry = new THREE.SphereGeometry(NUCLEON_RADIUS, 16, 16);
+        const protonMaterial = new THREE.MeshBasicMaterial({ color: 0xff0000 }); // Red for Protons
+        const neutronMaterial = new THREE.MeshBasicMaterial({ color: 0xcccccc }); // Gray for Neutrons
+
+        const totalParticles = protons + neutrons;
+        // Adjust cluster radius based on number of particles for a dense look
+        const clusterRadius = 0.2 + 0.05 * Math.pow(totalParticles, 1/3);
+
+        // Function to get a random position within the cluster sphere
+        function getRandomNucleonPosition() {
+            // Use spherical coordinates for better volume distribution
+            const u = Math.random() * 2 * Math.PI; // azimuthal angle
+            const v = Math.acos(2 * Math.random() - 1); // polar angle
+            const r = Math.cbrt(Math.random()) * clusterRadius; // Radius distribution for volume
+
+            const x = r * Math.sin(v) * Math.cos(u);
+            const y = r * Math.sin(v) * Math.sin(u);
+            const z = r * Math.cos(v);
+            return new THREE.Vector3(x, y, z);
+        }
+
+        // Create protons and neutrons
+        for (let i = 0; i < totalParticles; i++) {
+            const isProton = i < protons;
+            const material = isProton ? protonMaterial : neutronMaterial;
+
+            const nucleon = new THREE.Mesh(protonGeometry, material);
+            nucleon.position.copy(getRandomNucleonPosition());
+            nucleusGroup.add(nucleon);
+        }
+
+        scene.add(nucleusGroup);
+    }
+
+    /**
+     * Creates orbiting electron shells with pairing logic for shells > 1.
+     * @param {number[]} shells - Array of electron counts per shell.
+     */
+    function createElectronShells(shells) {
+        scene.remove(electronGroup);
+        electronGroup = new THREE.Group();
+
+        const electronMaterial = new THREE.MeshBasicMaterial({ color: 0x00ffff }); // Cyan for Electrons
+        const electronGeometry = new THREE.SphereGeometry(ELECTRON_RADIUS, 16, 16);
+
+        // Helper function to place an electron mesh
+        function placeElectron(shell, radius, angle) {
+            const electron = new THREE.Mesh(electronGeometry, electronMaterial);
+            // Position electron on the ring in the local XY plane
+            electron.position.x = radius * Math.cos(angle);
+            electron.position.y = radius * Math.sin(angle);
+            electron.position.z = 0;
+            shell.add(electron);
+        }
+
+        let radius = ELECTRON_ORBIT_BASE_RADIUS;
+
+        shells.forEach((electronsInShell, shellIndex) => {
+            if (electronsInShell === 0) return;
+
+            const shell = new THREE.Group();
+            shell.userData.radius = radius;
+            shell.userData.speed = ELECTRON_SPEED_BASE / (shellIndex + 1); // Slower on outer shells
+
+            // Create orbit path (Torus - thin ring)
+            const orbitGeometry = new THREE.TorusGeometry(radius, 0.015, 2, 100);
+            const orbitMaterial = new THREE.MeshBasicMaterial({ color: 0x333333, side: THREE.DoubleSide });
+            const orbit = new THREE.Mesh(orbitGeometry, orbitMaterial);
+
+            // Apply a random slight rotation to the ENTIRE shell group (orbit + electrons)
+            shell.rotation.x = Math.random() * Math.PI;
+            shell.rotation.y = Math.random() * Math.PI;
+
+            shell.add(orbit);
+
+            // --- Electron Placement Logic (with pairing for shells > 1) ---
+
+            const numPairs = Math.floor(electronsInShell / 2);
+            const loneElectron = electronsInShell % 2;
+
+            // If it's the first shell (K) or has few electrons, use even spacing.
+            if (shellIndex === 0 || electronsInShell <= 4) {
+                const angleIncrement = (Math.PI * 2) / electronsInShell;
+                for (let i = 0; i < electronsInShell; i++) {
+                    const angle = i * angleIncrement;
+                    placeElectron(shell, radius, angle);
+                }
+            } else {
+                // For larger shells, use pairing logic for a slightly more organized look
+                const totalSpots = numPairs + loneElectron;
+                const angleIncrement = (Math.PI * 2) / totalSpots;
+
+                // 1. Place the pairs
+                for (let i = 0; i < numPairs; i++) {
+                    const baseAngle = i * angleIncrement;
+
+                    // Electron 1 (the base position for the pair)
+                    placeElectron(shell, radius, baseAngle + 0.05); // Offset slightly for visualization
+
+                    // Electron 2 (180 degrees away from the first electron in the pair)
+                    placeElectron(shell, radius, baseAngle + Math.PI - 0.05);
+                }
+
+                // 2. Place the lone electron, if any
+                if (loneElectron === 1) {
+                    const loneAngle = numPairs * angleIncrement; // Place it in the last available spot
+                    placeElectron(shell, radius, loneAngle);
+                }
+            }
+
+            electronGroup.add(shell);
+
+            radius += ELECTRON_ORBIT_RADIUS_INCREMENT; // Increment radius for next shell
+        });
+
+        scene.add(electronGroup);
+    }
+
+    // --- Animation Loop ---
+
+    function animate() {
+        requestAnimationFrame(animate);
+
+        controls.update();
+
+        // Animate Electrons
+        electronGroup.children.forEach(shell => {
+            if (shell.type === 'Group') {
+                // Animate the entire shell group's rotation around its own Z-axis
+                shell.rotation.z += shell.userData.speed * 0.5;
+                // Electrons move correctly because they are children of this rotating group
+            }
+        });
+
+        renderer.render(scene, camera);
+    }
+
+    // --- Start Application ---
+    window.onload = function () {
+        init();
+        animate();
+    }
+</script>
+</body>
+</html>
